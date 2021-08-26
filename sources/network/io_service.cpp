@@ -120,16 +120,17 @@ io_service::poll(void) {
     timeout_ptr     = &timeout;
 #endif /* __TACOPIE_TIMEOUT */
 
-    __TACOPIE_LOG(debug, "polling fds");
+    // ex? __TACOPIE_LOG(debug, "polling fds");
     if (select(ndfs, &m_rd_set, &m_wr_set, NULL, timeout_ptr) > 0) {
       process_events();
     }
     else {
-      __TACOPIE_LOG(debug, "poll woke up, but nothing to process");
+      ;
+      // ex? __TACOPIE_LOG(debug, "poll woke up, but nothing to process");
     }
   }
 
-  __TACOPIE_LOG(debug, "stop poll() worker");
+  // ex? __TACOPIE_LOG(debug, "stop poll() worker");
 }
 
 //!

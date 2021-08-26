@@ -54,7 +54,7 @@
 namespace tacopie {
 
 void
-tcp_socket::connect(const std::string& host, std::uint32_t port, std::uint32_t timeout_msecs) {
+tcp_socket::connect(const std::string& host, std::uint32_t port, std::uint32_t timeout_msecs, bool use_encryption) {
   //! Reset host and port
   m_host = host;
   m_port = port;
@@ -162,6 +162,10 @@ tcp_socket::connect(const std::string& host, std::uint32_t port, std::uint32_t t
       close();
       __TACOPIE_THROW(error, "connect() timed out");
     }
+  }
+  if (use_encryption) {
+    // arriving here means successful connect
+    m_tls.establish_connection(m_fd, m_host);
   }
 }
 

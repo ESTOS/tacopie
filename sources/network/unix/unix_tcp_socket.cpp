@@ -42,10 +42,13 @@
 namespace tacopie {
 
 void
-tcp_socket::connect(const std::string& host, std::uint32_t port, std::uint32_t timeout_msecs) {
+tcp_socket::connect(const std::string& host, std::uint32_t port, std::uint32_t timeout_msecs, bool use_encryption) {
   //! Reset host and port
   m_host = host;
   m_port = port;
+  
+  if (use_encryption)
+    __TACOPIE_THROW(error, "encryption not supported");
 
   create_socket_if_necessary();
   check_or_set_type(type::CLIENT);

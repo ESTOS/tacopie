@@ -24,6 +24,7 @@
 #include <tacopie/utils/error.hpp>
 #include <tacopie/utils/logger.hpp>
 
+
 #ifdef _WIN32
 #ifdef __GNUC__
 #   include <Ws2tcpip.h>	   // Mingw / gcc on windows
@@ -74,7 +75,8 @@ tcp_socket::tcp_socket(void)
 : m_fd(__TACOPIE_INVALID_FD)
 , m_host("")
 , m_port(0)
-, m_type(type::UNKNOWN) { __TACOPIE_LOG(debug, "create tcp_socket"); }
+, m_type(type::UNKNOWN)
+  { __TACOPIE_LOG(debug, "create tcp_socket"); }
 
 //!
 //! custom ctor
@@ -85,7 +87,8 @@ tcp_socket::tcp_socket(fd_t fd, const std::string& host, std::uint32_t port, typ
 : m_fd(fd)
 , m_host(host)
 , m_port(port)
-, m_type(t) { __TACOPIE_LOG(debug, "create tcp_socket"); }
+, m_type(t)
+  { __TACOPIE_LOG(debug, "create tcp_socket"); }
 
 //!
 //! Move constructor
@@ -95,11 +98,12 @@ tcp_socket::tcp_socket(tcp_socket&& socket)
 : m_fd(std::move(socket.m_fd))
 , m_host(socket.m_host)
 , m_port(socket.m_port)
-, m_type(socket.m_type) {
+, m_type(socket.m_type)
+, m_tls(socket.m_tls) {
   socket.m_fd   = __TACOPIE_INVALID_FD;
   socket.m_type = type::UNKNOWN;
 
-  __TACOPIE_LOG(debug, "moved tcp_socket");
+  __TACOPIE_LOG(info, "moved tcp_socket");
 }
 
 //!
@@ -111,15 +115,19 @@ tcp_socket::recv(std::size_t size_to_read) {
   create_socket_if_necessary();
   check_or_set_type(type::CLIENT);
 
-  std::vector<char> data(size_to_read, 0);
+  std::vector<char> data;
 
-  ssize_t rd_size = ::recv(m_fd, const_cast<char*>(data.data()), __TACOPIE_LENGTH(size_to_read), 0);
+  if (m_tls.is_encryption_active())
+    data = m_tls.recv_decrypt(m_fd); // ignoring size_to_read, delivering decryptable chunk
+  else {
+    data.resize(size_to_read, 0);
+    ssize_t rd_size = ::recv(m_fd, const_cast<char*>(data.data()), __TACOPIE_LENGTH(size_to_read), 0);
 
-  if (rd_size == SOCKET_ERROR) { __TACOPIE_THROW(error, "recv() failure"); }
+    if (rd_size == SOCKET_ERROR) { __TACOPIE_THROW(error, "recv() failure"); }
+    if (rd_size == 0) { __TACOPIE_THROW(warn, "nothing to read, socket has been closed by remote host"); }
 
-  if (rd_size == 0) { __TACOPIE_THROW(warn, "nothing to read, socket has been closed by remote host"); }
-
-  data.resize(rd_size);
+    data.resize(rd_size);
+  }
 
   return data;
 }
@@ -129,7 +137,11 @@ tcp_socket::send(const std::vector<char>& data, std::size_t size_to_write) {
   create_socket_if_necessary();
   check_or_set_type(type::CLIENT);
 
-  ssize_t wr_size = ::send(m_fd, data.data(), __TACOPIE_LENGTH(size_to_write), 0);
+  std::size_t wr_size = SOCKET_ERROR;
+  if (m_tls.is_encryption_active())
+    wr_size = m_tls.send_encrypted(m_fd, data);
+  else
+    wr_size = ::send(m_fd, data.data(), __TACOPIE_LENGTH(size_to_write), 0);
 
   if (wr_size == SOCKET_ERROR) { __TACOPIE_THROW(error, "send() failure"); }
 

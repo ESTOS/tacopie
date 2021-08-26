@@ -27,6 +27,7 @@
 #include <vector>
 
 #include <tacopie/utils/typedefs.hpp>
+#include <tacopie/network/tls.hpp>
 
 namespace tacopie {
 
@@ -115,8 +116,9 @@ public:
   //! \param host Hostname of the target server
   //! \param port Port of the target server
   //! \param timeout_msecs maximum time to connect (will block until connect succeed or timeout expire). 0 will block undefinitely. If timeout expires, connection fails
+  //! \param use_encryption enables TLS when set to true
   //!
-  void connect(const std::string& host, std::uint32_t port, std::uint32_t timeout_msecs = 0);
+  void connect(const std::string& host, std::uint32_t port, std::uint32_t timeout_msecs, bool use_encryption);
 
   //!
   //! Binds the socket to the given host and port.
@@ -218,6 +220,12 @@ private:
   //! type of the socket
   //!
   type m_type;
+
+  //!
+  //! optional tls (Windows only)
+  //!
+  tls m_tls;
+
 };
 
 } // namespace tacopie

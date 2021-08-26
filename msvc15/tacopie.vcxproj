@@ -45,6 +45,7 @@ SOFTWARE.
     <ClCompile Include="..\sources\network\io_service.cpp" />
     <ClCompile Include="..\sources\network\tcp_client.cpp" />
     <ClCompile Include="..\sources\network\tcp_server.cpp" />
+    <ClCompile Include="..\sources\network\windows\tls.cpp" />
     <ClCompile Include="..\sources\network\windows\windows_self_pipe.cpp" />
     <ClCompile Include="..\sources\network\windows\windows_tcp_socket.cpp" />
     <ClCompile Include="..\sources\utils\error.cpp" />
@@ -57,6 +58,7 @@ SOFTWARE.
     <ClInclude Include="..\includes\tacopie\network\tcp_client.hpp" />
     <ClInclude Include="..\includes\tacopie\network\tcp_server.hpp" />
     <ClInclude Include="..\includes\tacopie\network\tcp_socket.hpp" />
+    <ClInclude Include="..\includes\tacopie\network\tls.hpp" />
     <ClInclude Include="..\includes\tacopie\utils\error.hpp" />
     <ClInclude Include="..\includes\tacopie\utils\logger.hpp" />
     <ClInclude Include="..\includes\tacopie\utils\thread_pool.hpp" />
@@ -70,7 +72,7 @@ SOFTWARE.
     <ProjectGuid>{5DC28D31-04A5-4509-8EE3-CF16DE77475B}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>tacopie</RootNamespace>
-    <WindowsTargetPlatformVersion>8.1</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.19041.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -89,13 +91,13 @@ SOFTWARE.
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v142</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v140</PlatformToolset>
+    <PlatformToolset>v142</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
@@ -131,7 +133,7 @@ SOFTWARE.
       </PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
-      <PreprocessorDefinitions>WIN32;_DEBUG;_LIB;_WIN32;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_LIB;_WIN32;SECURITY_WIN32;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>..\includes;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <TreatWarningAsError>true</TreatWarningAsError>
     </ClCompile>
@@ -145,9 +147,10 @@ SOFTWARE.
       </PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
-      <PreprocessorDefinitions>_DEBUG;_LIB;_WIN32;_WIN64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_LIB;_WIN32;_WIN64;__TACOPIE_LOGGING_ENABLED;SECURITY_WIN32;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>..\includes;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <TreatWarningAsError>true</TreatWarningAsError>
+      <ProgramDataBaseFileName>$(IntDir)$(ProjectName).pdb</ProgramDataBaseFileName>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -161,7 +164,7 @@ SOFTWARE.
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_LIB;_WIN32;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_LIB;_WIN32;SECURITY_WIN32;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>..\includes;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <TreatWarningAsError>true</TreatWarningAsError>
     </ClCompile>
@@ -179,7 +182,7 @@ SOFTWARE.
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>NDEBUG;_LIB;_WIN32;_WIN64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_LIB;_WIN32;_WIN64;__TACOPIE_LOGGING_ENABLED;SECURITY_WIN32;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>..\includes;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <TreatWarningAsError>true</TreatWarningAsError>
     </ClCompile>
