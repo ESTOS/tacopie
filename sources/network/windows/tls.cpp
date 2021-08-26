@@ -149,16 +149,23 @@ tls::handshake_loop(const fd_t& socket, const std::string& host) {
     if (security_status == SEC_I_CONTINUE_NEEDED && !process_extra_data) {
       if (out_buffer[0].cbBuffer > 0) {
         pc_token = static_cast<char*>(out_buffer[0].pvBuffer);
-        ::send(socket, pc_token, out_buffer[0].cbBuffer, 0);
+        int send_result = ::send(socket, pc_token, out_buffer[0].cbBuffer, 0);
+        if (send_result == SOCKET_ERROR) { __TACOPIE_THROW(error, "send() failure"); }
         FreeContextBuffer(out_buffer[0].pvBuffer);
       }
-      bytes_received_count = ::recv(socket, buffer.data(), static_cast<unsigned int> (buffer.size()), 0);
+      int recv_result = bytes_received_count = ::recv(socket, buffer.data(), static_cast<unsigned int> (buffer.size()), 0);
+      if (recv_result == SOCKET_ERROR) { __TACOPIE_THROW(error, "recv() failure"); }
+      if (recv_result == 0) { __TACOPIE_THROW(warn, "nothing to read, socket has been closed by remote host"); }
+      bytes_received_count = recv_result;
     }
     else if (security_status == SEC_E_INCOMPLETE_MESSAGE) {
       if (in_buffer[1].BufferType == SECBUFFER_MISSING) {
         int missing_data_count = in_buffer[1].cbBuffer;
         __TACOPIE_LOG(info, std::string("secbuffer_missing: " + missing_data_count));
-        bytes_received_count = ::recv(socket, buffer.data(), missing_data_count, 0);
+        int recv_result = ::recv(socket, buffer.data(), missing_data_count, 0);
+        if (recv_result == SOCKET_ERROR) { __TACOPIE_THROW(error, "recv() failure"); }
+        if (recv_result == 0) { __TACOPIE_THROW(warn, "nothing to read, socket has been closed by remote host"); }
+        bytes_received_count = recv_result;
       }
     }
 
@@ -226,7 +233,8 @@ tls::handshake_loop(const fd_t& socket, const std::string& host) {
       if (out_buffer[0].cbBuffer > 0) {
         __TACOPIE_LOG(info, std::string("sending leftover bytes in output buffer"));
         pc_token = static_cast<char*>(out_buffer[0].pvBuffer);
-        ::send(socket, pc_token, out_buffer[0].cbBuffer, 0);
+        int send_result = ::send(socket, pc_token, out_buffer[0].cbBuffer, 0);
+        if (send_result == SOCKET_ERROR) { __TACOPIE_THROW(error, "send() failure"); }
         FreeContextBuffer(out_buffer[0].pvBuffer);
       }
       if (in_buffer[1].BufferType == SECBUFFER_EXTRA) {
@@ -304,8 +312,7 @@ tls::send_encrypted(const fd_t& socket, const std::vector<char>& unencrypted_dat
     int encrypted_size = buffers[0].cbBuffer + buffers[1].cbBuffer + buffers[2].cbBuffer;
 
     ssize_t send_result = ::send(socket, buffer.data(), encrypted_size, 0);
-    if (send_result == SOCKET_ERROR)
-      return send_result;
+    if (send_result == SOCKET_ERROR) { __TACOPIE_THROW(error, "send() failure"); }
 
     unencrypted_bytes_written += current_unencrypted_chunk;
   } // while bytes left to send
@@ -332,13 +339,15 @@ tls::recv_decrypt(const fd_t& socket) {
   // case part of next block has already been received)
   while (decrypted_bytes == 0 || security_status == SEC_E_INCOMPLETE_MESSAGE) {
     encrypted_data.resize(encrypted_bytes + buffer_increment_size); // buffer needs to grow on incomplete messages
-    encrypted_bytes += ::recv(socket, const_cast<char*>(encrypted_data.data()) + encrypted_bytes, static_cast<unsigned long>(buffer_increment_size), 0);
+    int recv_result = ::recv(socket, const_cast<char*>(encrypted_data.data()) + encrypted_bytes, static_cast<unsigned long>(buffer_increment_size), 0);
 
-    if (encrypted_bytes == SOCKET_ERROR) { __TACOPIE_THROW(error, "recv() failure"); }
-    if (encrypted_bytes == 0) { __TACOPIE_THROW(warn, "nothing to read, socket has been closed by remote host"); }
+    if (recv_result == SOCKET_ERROR) { __TACOPIE_THROW(error, "recv() failure"); }
+    if (recv_result == 0) { __TACOPIE_THROW(warn, "nothing to read, socket has been closed by remote host"); }
+
+    encrypted_bytes += recv_result;
 
     __TACOPIE_LOG(debug, std::string("encrypted bytes in buffer: ") + std::to_string(encrypted_bytes));
-    security_status = SEC_E_OK;
+    security_status = SEC_E_OK; // allow entry of decrypt loop
 
     while (encrypted_bytes != 0 && security_status != SEC_E_INCOMPLETE_MESSAGE) {
       buffer_desc.cBuffers  = 4;

@@ -140,10 +140,10 @@ tcp_socket::send(const std::vector<char>& data, std::size_t size_to_write) {
   std::size_t wr_size = SOCKET_ERROR;
   if (m_tls.is_encryption_active())
     wr_size = m_tls.send_encrypted(m_fd, data);
-  else
+  else {
     wr_size = ::send(m_fd, data.data(), __TACOPIE_LENGTH(size_to_write), 0);
-
-  if (wr_size == SOCKET_ERROR) { __TACOPIE_THROW(error, "send() failure"); }
+    if (wr_size == SOCKET_ERROR) { __TACOPIE_THROW(error, "send() failure"); }
+  }
 
   return wr_size;
 }
