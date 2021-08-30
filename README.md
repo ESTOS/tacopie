@@ -1,6 +1,6 @@
 # ESTOS - Readme
 
-(no changes yet - just to divert from original README by now)
+Supports TLS encrypted connections (Windows client only).
 
 # Important
 

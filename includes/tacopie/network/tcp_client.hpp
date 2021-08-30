@@ -90,8 +90,9 @@ public:
   //! \param host Hostname of the target server
   //! \param port Port of the target server
   //! \param timeout_msecs maximum time to connect (will block until connect succeed or timeout expire). 0 will block undefinitely. If timeout expires, connection fails
+  //! \param use_encryption enables TLS when set to true
   //!
-  void connect(const std::string& host, std::uint32_t port, std::uint32_t timeout_msecs = 0);
+  void connect(const std::string& host, std::uint32_t port, std::uint32_t timeout_msecs, bool use_encryption);
 
   //!
   //! Disconnect the tcp_client if it was currently connected.
