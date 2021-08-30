@@ -1,6 +1,11 @@
-// MIT License
 //
-// Copyright (c) 2016-2017 Simon Ninon <simon.ninon@gmail.com>
+// Copyright (c) 2021 Martin Unger for estos GmbH
+// 
+// Based on code available at https://github.com/John-Ad/Schannel-https-implementation
+// No license attached as of 2021-08-27.
+//
+// Code was substantially modified for our purpose and these changes are put under the
+// following license.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -35,7 +40,7 @@
 #include <tacopie/utils/logger.hpp>
 
 // There is no handling of connection loss or renegotiate here. It is left to the above
-// wrapper to initialte a reconnect in such cases.
+// wrapper to initiate a reconnect in such cases.
 
 namespace tacopie {
 
@@ -43,9 +48,12 @@ namespace tacopie {
 //! ctor & dtor
 //!
 tls::tls(void)
-: m_encryption_active(false) {
-  __TACOPIE_LOG(debug, "tls constructed");  
-  }
+: m_encryption_active(false),
+  m_encrypted_bytes(0) {
+  memset(&m_credentials, 0, sizeof(m_credentials));
+  memset(&m_context, 0, sizeof(m_context));
+  __TACOPIE_LOG(debug, "tls constructed");
+}
 
 tls::~tls(void) {
 }
@@ -55,6 +63,11 @@ tls::~tls(void) {
 //!
 void
 tls::establish_connection(const fd_t &socket, const std::string& host) {
+
+  // Data from old context can not be decrypted anymore
+  m_encrypted_data.clear();
+  m_encrypted_bytes = 0;
+
   get_schannel_credentials();
   handshake_loop(socket, host);
   m_encryption_active = true;
@@ -70,9 +83,10 @@ tls::get_schannel_credentials() {
 
   ZeroMemory(&credentials_data, sizeof(credentials_data));
   credentials_data.dwVersion = SCHANNEL_CRED_VERSION;
-  // opportunity to restrict used protocols on client side. Suggest to use this only for
+  // Opportunity to restrict used protocols on client side. Suggest to use this only for
   // tests and implement needed restrictions on server.
-  // credData.grbitEnabledProtocols = SP_PROT_TLS1;
+  // Example: (TLS 1.3 currently not supported on Windows. Available with Windows Server 2022)
+  // credData.grbitEnabledProtocols = SP_PROT_TLS1_0 | SP_PROT_TLS1_1 | SP_PROT_TLS1_2;
 
   SECURITY_STATUS security_status = AcquireCredentialsHandle( //gets the credentials necessary to make use of the ssp
     NULL,                                                    //default principle
@@ -82,7 +96,7 @@ tls::get_schannel_credentials() {
     &credentials_data,                                       //protocol specific data
     NULL,                                                    //default
     NULL,                                                    //default
-    &m_h_credentials,                                         //where the handle will be stored
+    &m_credentials,                                         //where the handle will be stored
     &lifetime                                                //stores the time limit of the credential
   );
 
@@ -103,7 +117,7 @@ tls::handshake_loop(const fd_t& socket, const std::string& host) {
   SecBuffer out_buffer[1];
   SecBufferDesc in_buffer_desc;
   SecBuffer in_buffer[2];
-  ULONG ul_context_attributes;
+  ULONG context_attributes;
   DWORD flags;
 
   out_buffer_desc.ulVersion = SECBUFFER_VERSION;
@@ -122,7 +136,7 @@ tls::handshake_loop(const fd_t& socket, const std::string& host) {
   flags = ISC_REQ_ALLOCATE_MEMORY | ISC_REQ_SEQUENCE_DETECT | ISC_REQ_REPLAY_DETECT | ISC_REQ_STREAM | ISC_REQ_CONFIDENTIALITY | ISC_RET_EXTENDED_ERROR;
 
   SECURITY_STATUS security_status = InitializeSecurityContext(
-    &m_h_credentials,      // credentials acquired by acquireCredentialsHandle
+    &m_credentials,      // credentials acquired by acquireCredentialsHandle
     NULL,                 // in the first call this is NULL, afterwards use hcText parameter variable
     whost.data(),         // name of the server
     flags,                // bit flags that state how the security context will function
@@ -130,10 +144,10 @@ tls::handshake_loop(const fd_t& socket, const std::string& host) {
     SECURITY_NATIVE_DREP, // how the data is represented. In schannel this argument is not used and set to 0
     NULL,                 // this is the buffer that will be received from the server. On the first call this is NULL
     0,                    // reserved and set to 0
-    &m_ph_context,         // receives the context handle. With Schannel, after the first call, this must be NULL and
+    &m_context,         // receives the context handle. With Schannel, after the first call, this must be NULL and
                           // arg2 must take phContext
     &out_buffer_desc,       // buffer where the token will be stored. This will be sent to the server later
-    &ul_context_attributes, // this is where the set of bit flags will be received. These flags indicate the attributes of the context
+    &context_attributes, // this is where the set of bit flags will be received. These flags indicate the attributes of the context
     &lifetime);
 
   if (security_status != SEC_I_CONTINUE_NEEDED) {
@@ -143,29 +157,22 @@ tls::handshake_loop(const fd_t& socket, const std::string& host) {
   bool process_extra_data = false;
   int bytes_received_count = 0;
   char* pc_token = NULL;
-  std::vector<char> buffer(4000);
+  std::vector<char> buffer(0x1000);
 
   while (security_status != SEC_E_OK) {
     if (security_status == SEC_I_CONTINUE_NEEDED && !process_extra_data) {
       if (out_buffer[0].cbBuffer > 0) {
         pc_token = static_cast<char*>(out_buffer[0].pvBuffer);
-        int send_result = ::send(socket, pc_token, out_buffer[0].cbBuffer, 0);
-        if (send_result == SOCKET_ERROR) { __TACOPIE_THROW(error, "send() failure"); }
+        tls_send(socket, pc_token, out_buffer[0].cbBuffer);
         FreeContextBuffer(out_buffer[0].pvBuffer);
       }
-      int recv_result = bytes_received_count = ::recv(socket, buffer.data(), static_cast<unsigned int> (buffer.size()), 0);
-      if (recv_result == SOCKET_ERROR) { __TACOPIE_THROW(error, "recv() failure"); }
-      if (recv_result == 0) { __TACOPIE_THROW(warn, "nothing to read, socket has been closed by remote host"); }
-      bytes_received_count = recv_result;
+      bytes_received_count = tls_receive(socket, buffer.data(), static_cast<unsigned int>(buffer.size()));
     }
     else if (security_status == SEC_E_INCOMPLETE_MESSAGE) {
       if (in_buffer[1].BufferType == SECBUFFER_MISSING) {
         int missing_data_count = in_buffer[1].cbBuffer;
         __TACOPIE_LOG(info, std::string("secbuffer_missing: " + missing_data_count));
-        int recv_result = ::recv(socket, buffer.data(), missing_data_count, 0);
-        if (recv_result == SOCKET_ERROR) { __TACOPIE_THROW(error, "recv() failure"); }
-        if (recv_result == 0) { __TACOPIE_THROW(warn, "nothing to read, socket has been closed by remote host"); }
-        bytes_received_count = recv_result;
+        bytes_received_count = tls_receive(socket, buffer.data(), missing_data_count);
       }
     }
 
@@ -191,8 +198,8 @@ tls::handshake_loop(const fd_t& socket, const std::string& host) {
 
     // https: //docs.microsoft.com/en-us/windows/win32/api/sspi/nf-sspi-initializesecuritycontextw
     security_status = InitializeSecurityContext(
-    &m_h_credentials,
-    &m_ph_context,
+    &m_credentials,
+    &m_context,
     NULL,
     flags,
     0,
@@ -201,7 +208,7 @@ tls::handshake_loop(const fd_t& socket, const std::string& host) {
     0,
     NULL,
     &out_buffer_desc,
-    &ul_context_attributes,
+    &context_attributes,
     &lifetime);
 
     process_extra_data = false;
@@ -220,7 +227,7 @@ tls::handshake_loop(const fd_t& socket, const std::string& host) {
     case SEC_I_CONTINUE_NEEDED:
       if (in_buffer[1].BufferType == SECBUFFER_EXTRA) {
         __TACOPIE_LOG(info, std::string("CONTINUE_NEEDED: Extra data in in_buffer"));
-        // shift exta bytes to the beginning of the input buffer
+        // Shift extra bytes to the beginning of the input buffer
         if (in_buffer[1].cbBuffer > static_cast<unsigned long long>(bytes_received_count))
           __TACOPIE_THROW(error, "part of buffer larger than whole");
         memmove(buffer.data(), buffer.data() + (static_cast<unsigned long long>(bytes_received_count) - in_buffer[1].cbBuffer), in_buffer[1].cbBuffer);
@@ -233,14 +240,14 @@ tls::handshake_loop(const fd_t& socket, const std::string& host) {
       if (out_buffer[0].cbBuffer > 0) {
         __TACOPIE_LOG(info, std::string("sending leftover bytes in output buffer"));
         pc_token = static_cast<char*>(out_buffer[0].pvBuffer);
-        int send_result = ::send(socket, pc_token, out_buffer[0].cbBuffer, 0);
-        if (send_result == SOCKET_ERROR) { __TACOPIE_THROW(error, "send() failure"); }
+        tls_send(socket, pc_token, out_buffer[0].cbBuffer);
         FreeContextBuffer(out_buffer[0].pvBuffer);
       }
       if (in_buffer[1].BufferType == SECBUFFER_EXTRA) {
-        __TACOPIE_LOG(info, std::string("SEC_E_OK: Extra data in in_buffer"));
-        // These bytes need to be decrypted [currently not handled]
-        __TACOPIE_LOG(warn, std::string("Extra bytes to be decrypted") + std::to_string(in_buffer[1].cbBuffer));
+        // When a connection has been negotiated, there may be data already read in the buffer.
+        __TACOPIE_LOG(info, std::string("Encrypted data available after connect: " + std::to_string(in_buffer[1].cbBuffer)));
+        memmove(const_cast<char*>(m_encrypted_data.data()), in_buffer[1].pvBuffer, in_buffer[1].cbBuffer);
+        m_encrypted_bytes = in_buffer[1].cbBuffer;
       }
       break;
 
@@ -259,7 +266,7 @@ tls::handshake_loop(const fd_t& socket, const std::string& host) {
 std::size_t
 tls::send_encrypted(const fd_t& socket, const std::vector<char>& unencrypted_data) {
 
-  SECURITY_STATUS security_status = QueryContextAttributes(&m_ph_context, SECPKG_ATTR_STREAM_SIZES, &m_stream_sizes);
+  SECURITY_STATUS security_status = QueryContextAttributes(&m_context, SECPKG_ATTR_STREAM_SIZES, &m_stream_sizes);
 
   if (security_status != SEC_E_OK) {
     __TACOPIE_LOG(warn, std::string("QueryContextAttributes result: ") + get_sspi_result_string(security_status));
@@ -277,7 +284,7 @@ tls::send_encrypted(const fd_t& socket, const std::vector<char>& unencrypted_dat
     if (unencrypted_bytes_left > m_stream_sizes.cbMaximumMessage)
       unencrypted_bytes_left += 0;
 
-    //copy the unencrypted data just after the header bytes to the buffer
+    // Copy the unencrypted data just after the header bytes to the buffer
     memcpy(buffer.data() + m_stream_sizes.cbHeader, unencrypted_data.data() + unencrypted_bytes_written, current_unencrypted_chunk);
 
     SecBufferDesc message_buffer;
@@ -304,19 +311,19 @@ tls::send_encrypted(const fd_t& socket, const std::vector<char>& unencrypted_dat
     buffers[3].BufferType = SECBUFFER_EMPTY;
 
     // https://docs.microsoft.com/en-us/windows/win32/secauthn/encryptmessage--schannel
-    security_status = EncryptMessage(&m_ph_context, 0, &message_buffer, 0);
+    security_status = EncryptMessage(&m_context, 0, &message_buffer, 0);
     if (security_status != SEC_E_OK) {
       __TACOPIE_THROW(error, std::string("EncryptMessage result: ") + get_sspi_result_string(security_status));
     }
 
     int encrypted_size = buffers[0].cbBuffer + buffers[1].cbBuffer + buffers[2].cbBuffer;
 
-    ssize_t send_result = ::send(socket, buffer.data(), encrypted_size, 0);
-    if (send_result == SOCKET_ERROR) { __TACOPIE_THROW(error, "send() failure"); }
+    tls_send(socket, buffer.data(), encrypted_size);
 
     unencrypted_bytes_written += current_unencrypted_chunk;
   } // while bytes left to send
 
+  // Return amount of unencrypted data sent(caller does not know about encrypted size)
   return unencrypted_bytes_written;
 }
 
@@ -326,36 +333,30 @@ tls::send_encrypted(const fd_t& socket, const std::vector<char>& unencrypted_dat
 std::vector<char>
 tls::recv_decrypt(const fd_t& socket) {
 
-  int encrypted_bytes = 0;
   int decrypted_bytes = 0;
   const std::size_t buffer_increment_size = 0x1000;
-  std::vector<char> encrypted_data;
   std::vector<char> decrypted_data;
   SECURITY_STATUS security_status = SEC_E_OK;
   SecBufferDesc buffer_desc;
   SecBuffer sec_buffer[4];
 
-  // read more data until able to decrypt or decryptable data block not complete (in
+  // Read more data until able to decrypt or decryptable data block not complete (in
   // case part of next block has already been received)
-  while (decrypted_bytes == 0 || security_status == SEC_E_INCOMPLETE_MESSAGE) {
-    encrypted_data.resize(encrypted_bytes + buffer_increment_size); // buffer needs to grow on incomplete messages
-    int recv_result = ::recv(socket, const_cast<char*>(encrypted_data.data()) + encrypted_bytes, static_cast<unsigned long>(buffer_increment_size), 0);
+  while (decrypted_bytes == 0) {
+    m_encrypted_data.resize(m_encrypted_bytes + buffer_increment_size); // buffer needs to grow on incomplete messages
+    
+    m_encrypted_bytes += tls_receive(socket, const_cast<char*>(m_encrypted_data.data()) + m_encrypted_bytes, static_cast<unsigned long>(buffer_increment_size));
 
-    if (recv_result == SOCKET_ERROR) { __TACOPIE_THROW(error, "recv() failure"); }
-    if (recv_result == 0) { __TACOPIE_THROW(warn, "nothing to read, socket has been closed by remote host"); }
-
-    encrypted_bytes += recv_result;
-
-    __TACOPIE_LOG(debug, std::string("encrypted bytes in buffer: ") + std::to_string(encrypted_bytes));
+    __TACOPIE_LOG(debug, std::string("encrypted bytes in buffer: ") + std::to_string(m_encrypted_bytes));
     security_status = SEC_E_OK; // allow entry of decrypt loop
 
-    while (encrypted_bytes != 0 && security_status != SEC_E_INCOMPLETE_MESSAGE) {
+    while (m_encrypted_bytes != 0 && security_status != SEC_E_INCOMPLETE_MESSAGE) {
       buffer_desc.cBuffers  = 4;
       buffer_desc.pBuffers  = sec_buffer;
       buffer_desc.ulVersion = SECBUFFER_VERSION;
 
-      sec_buffer[0].cbBuffer   = encrypted_bytes;
-      sec_buffer[0].pvBuffer   = encrypted_data.data(); // not decrypted in place as documented
+      sec_buffer[0].cbBuffer   = m_encrypted_bytes;
+      sec_buffer[0].pvBuffer   = m_encrypted_data.data(); // not decrypted in place as documented
       sec_buffer[0].BufferType = SECBUFFER_DATA;
 
       sec_buffer[1].BufferType = SECBUFFER_EMPTY;
@@ -364,20 +365,20 @@ tls::recv_decrypt(const fd_t& socket) {
 
       // https://docs.microsoft.com/en-us/windows/win32/secauthn/decryptmessage--general
       // https://docs.microsoft.com/en-us/windows/win32/secauthn/decryptmessage--schannel
-      security_status = DecryptMessage(&m_ph_context, &buffer_desc, 0, NULL);
+      security_status = DecryptMessage(&m_context, &buffer_desc, 0, NULL);
 
       switch (security_status) {
       case SEC_E_OK: {
         __TACOPIE_LOG(debug, "data successfully decrypted");
 
-        encrypted_bytes = 0; // all bytes used
+        m_encrypted_bytes = 0; // all bytes used
 
         for (int i = 0; i < 4; i++) {
           switch (sec_buffer[i].BufferType) {
           case SECBUFFER_DATA:
-            // append decrypted bytes to output buffer. May be 0 bytes according to doc.
+            // Append decrypted bytes to output buffer. May be 0 bytes according to doc.
             if (sec_buffer[i].cbBuffer) {
-              decrypted_data.resize(decrypted_bytes + sec_buffer[i].cbBuffer);
+              decrypted_data.resize(static_cast<unsigned long long>(decrypted_bytes) + sec_buffer[i].cbBuffer);
               memcpy(const_cast<char*>(decrypted_data.data()) + decrypted_bytes, sec_buffer[i].pvBuffer, sec_buffer[i].cbBuffer);
               decrypted_bytes += sec_buffer[i].cbBuffer;
               FreeContextBuffer(sec_buffer[i].pvBuffer);
@@ -386,9 +387,9 @@ tls::recv_decrypt(const fd_t& socket) {
           case SECBUFFER_EXTRA:
             // When a block has been decrypted, there may be data already read for the next block in the buffer.
             __TACOPIE_LOG(info, std::string("Data for next encryptable block: " + std::to_string(sec_buffer[i].cbBuffer)));
-            memmove(const_cast<char*>(encrypted_data.data()), sec_buffer[i].pvBuffer, sec_buffer[i].cbBuffer);
-            encrypted_bytes = sec_buffer[i].cbBuffer;
-            //FreeContextBuffer(sec_buffer[i].pvBuffer); // triggers exception
+            memmove(const_cast<char*>(m_encrypted_data.data()), sec_buffer[i].pvBuffer, sec_buffer[i].cbBuffer);
+            m_encrypted_bytes = sec_buffer[i].cbBuffer;
+            //FreeContextBuffer(sec_buffer[i].pvBuffer); // triggers exception (reverse engineered)
             break;
           default:
             break;
@@ -401,24 +402,46 @@ tls::recv_decrypt(const fd_t& socket) {
         for (int i = 0; i < 4; i++) {
           if (sec_buffer[i].BufferType == SECBUFFER_ALERT) {
             __TACOPIE_LOG(warn, std::string("SECBUFFER_ALERT: ") + std::string((char*) sec_buffer[i].pvBuffer));
+            // FreeContextBuffer(sec_buffer[i].pvBuffer); // unable to test, may throw exception
           }
         }
         __TACOPIE_THROW(warn, std::string("failed to decrypt: ") + get_sspi_result_string(security_status));
         break;
 
       case SEC_E_INCOMPLETE_MESSAGE:
-        // we need to read more data
+        // We need to read more data already available from socket. We are now in one of two possible situations:
+        // - no data has been decrypted yet: Continue reading.
+        // - decrypted data available: Return it. As more data is available, we will be called again
+        //   to continue.
         __TACOPIE_LOG(debug, get_sspi_result_string(security_status));
         break;
 
       default:
         __TACOPIE_THROW(warn, get_sspi_result_string(security_status));
       } // switch
-    } // while encrypted bytes && security_status != SEC_E_INCOMPLETE_MESSAGE
-  } // while decrypted_bytes == 0 || security_status == SEC_E_INCOMPLETE_MESSAGE
+    } // while encrypted bytes != 0 && security_status != SEC_E_INCOMPLETE_MESSAGE
+  } // while decrypted_bytes == 0
 
   return decrypted_data;
 }
+
+int
+tls::tls_receive(SOCKET socket, char* buffer, int length) {
+  int error_or_count = ::recv(socket, buffer, length, 0);
+  if (error_or_count == SOCKET_ERROR) { __TACOPIE_THROW(error, "recv() failure"); }
+  if (error_or_count == 0) { __TACOPIE_THROW(warn, "nothing to read, socket has been closed by remote host"); }
+
+  return error_or_count;
+}
+
+int
+tls::tls_send(SOCKET socket, const char* buffer, int length) {
+  int error_or_count = ::send(socket, buffer, length, 0);
+  if (error_or_count == SOCKET_ERROR) { __TACOPIE_THROW(error, "send() failure"); }
+
+  return error_or_count;
+}
+
 
 std::string
 tls::get_sspi_result_string(SECURITY_STATUS security_status) {
@@ -455,7 +478,7 @@ tls::get_sspi_result_string(SECURITY_STATUS security_status) {
     {SEC_E_DECRYPT_FAILURE, "SEC_E_DECRYPT_FAILURE - The specified data could not be decrypted."},
     {SEC_E_ENCRYPT_FAILURE, "SEC_E_ENCRYPT_FAILURE - The specified data could not be encrypted."},
     {SEC_I_INCOMPLETE_CREDENTIALS, "SEC_I_INCOMPLETE_CREDENTIALS - The credentials supplied were not complete and could not be verified. Additional information can be returned from the context."},
-    {SEC_E_INCOMPLETE_MESSAGE, "SEC_E_INCOMPLETE_MESSAGE - The data in the input buffer is incomplete. The application needs to read more data from the server and call DecryptMessage (General) again."},
+    {SEC_E_INCOMPLETE_MESSAGE, "SEC_E_INCOMPLETE_MESSAGE - The data in the input buffer is incomplete. The application needs to read more data from the server and call DecryptMessage again."},
     {SEC_E_INVALID_HANDLE, "SEC_E_INVALID_HANDLE - A context handle that is not valid was specified in the phContext parameter."},
     {SEC_E_INVALID_TOKEN, "SEC_E_INVALID_TOKEN - The buffers are of the wrong type or no buffer of type SECBUFFER_DATA was found."},
     {SEC_E_INSUFFICIENT_MEMORY, "SEC_E_INSUFFICIENT_MEMORY - Not enough memory is available to complete the request."},
@@ -491,7 +514,7 @@ tls::get_sspi_result_string(SECURITY_STATUS security_status) {
 
   for (int i = 0; i < (sizeof(security_status_as_string) / sizeof(*security_status_as_string)); i++) {
     if (security_status == security_status_as_string[i].first) {
-      str_message = security_status_as_string[i].second;
+      str_message = hexval.str() + " - " + security_status_as_string[i].second;
       break;
     }
   }

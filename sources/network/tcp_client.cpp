@@ -87,8 +87,8 @@ tcp_client::connect(const std::string& host, std::uint32_t port, std::uint32_t t
   }
 
   m_is_connected = true;
-
-  __TACOPIE_LOG(info, "tcp_client connected to " + host + ":" + std::to_string(port));
+  std::string encrypted = use_encryption ? " encrypted" : "";
+  __TACOPIE_LOG(info, "tcp_client connected to " + host + ":" + std::to_string(port) + encrypted);
 }
 
 void

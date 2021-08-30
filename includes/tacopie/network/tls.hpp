@@ -1,6 +1,11 @@
-// MIT License
 //
-// Copyright (c) 2016-2017 Simon Ninon <simon.ninon@gmail.com>
+// Copyright (c) 2021 Martin Unger for estos GmbH
+//
+// Based on code available at https://github.com/John-Ad/Schannel-https-implementation
+// No license attached as of 2021-08-27.
+//
+// Code was substantially modified for our purpose and these changes are put under the
+// following license.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -48,7 +53,7 @@ public:
   //! ctor
   tls(void);
   //! dtor
-  ~tls(void);
+  virtual ~tls(void);
 
   public:
 
@@ -82,18 +87,24 @@ public:
   //! is encryption active
   //!
   bool
-  is_encryption_active() { return m_encryption_active; }
+  is_encryption_active() const { return m_encryption_active; }
 
   private:
 
 #ifdef _WIN32
-  CredHandle m_h_credentials;
-  CtxtHandle m_ph_context;
+  CredHandle m_credentials;
+  CtxtHandle m_context;
   SecPkgContext_StreamSizes m_stream_sizes;
   bool m_encryption_active;
 
+  // we need to preserve encrypted data received over several calls of recv_decrypt
+  std::vector<char> m_encrypted_data;
+  int m_encrypted_bytes = 0;
+
   void get_schannel_credentials();
   void handshake_loop(const fd_t& socket, const std::string &host);
+  int tls_receive(SOCKET socket, char* buffer, int length);
+  int tls_send(SOCKET socket, const char* buffer, int length);
   std::string get_sspi_result_string(SECURITY_STATUS SecurityStatus);
 
 #else

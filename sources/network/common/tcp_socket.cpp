@@ -103,7 +103,7 @@ tcp_socket::tcp_socket(tcp_socket&& socket)
   socket.m_fd   = __TACOPIE_INVALID_FD;
   socket.m_type = type::UNKNOWN;
 
-  __TACOPIE_LOG(info, "moved tcp_socket");
+  __TACOPIE_LOG(debug, "moved tcp_socket");
 }
 
 //!
@@ -117,8 +117,10 @@ tcp_socket::recv(std::size_t size_to_read) {
 
   std::vector<char> data;
 
-  if (m_tls.is_encryption_active())
+  if (m_tls.is_encryption_active()) {
+    // called function throws errors from tls class
     data = m_tls.recv_decrypt(m_fd); // ignoring size_to_read, delivering decryptable chunk
+  }
   else {
     data.resize(size_to_read, 0);
     ssize_t rd_size = ::recv(m_fd, const_cast<char*>(data.data()), __TACOPIE_LENGTH(size_to_read), 0);
@@ -138,8 +140,10 @@ tcp_socket::send(const std::vector<char>& data, std::size_t size_to_write) {
   check_or_set_type(type::CLIENT);
 
   std::size_t wr_size = SOCKET_ERROR;
-  if (m_tls.is_encryption_active())
+  if (m_tls.is_encryption_active()) {
+    // called function throws errors from tls class
     wr_size = m_tls.send_encrypted(m_fd, data);
+  }
   else {
     wr_size = ::send(m_fd, data.data(), __TACOPIE_LENGTH(size_to_write), 0);
     if (wr_size == SOCKET_ERROR) { __TACOPIE_THROW(error, "send() failure"); }
