@@ -166,12 +166,14 @@ tls::handshake_loop(const fd_t& socket, const std::string& host) {
         tls_send(socket, pc_token, out_buffer[0].cbBuffer);
         FreeContextBuffer(out_buffer[0].pvBuffer);
       }
+      tls_wait_for_reply_on_socket(socket);
       bytes_received_count = tls_receive(socket, buffer.data(), static_cast<unsigned int>(buffer.size()));
     }
     else if (security_status == SEC_E_INCOMPLETE_MESSAGE) {
       if (in_buffer[1].BufferType == SECBUFFER_MISSING) {
         int missing_data_count = in_buffer[1].cbBuffer;
         __TACOPIE_LOG(info, std::string("secbuffer_missing: " + missing_data_count));
+        tls_wait_for_reply_on_socket(socket);
         bytes_received_count = tls_receive(socket, buffer.data(), missing_data_count);
       }
     }
@@ -425,8 +427,8 @@ tls::recv_decrypt(const fd_t& socket) {
   return decrypted_data;
 }
 
-int
-tls::tls_receive(SOCKET socket, char* buffer, int length) {
+void
+tls::tls_wait_for_reply_on_socket(SOCKET socket) {
   // We need to handle the case when no data is received. Assume negotiation is started on
   // a plain connection. Then "client hello" gets no response and system hangs.
   WSAPOLLFD poll_fd;
@@ -435,8 +437,8 @@ tls::tls_receive(SOCKET socket, char* buffer, int length) {
   // wait for data available to read
   poll_fd.events = POLLRDNORM;
 
-  int timeout_ms = 5000;
-  
+  const int timeout_ms = 5000;
+
   int ret = WSAPoll(&poll_fd, 1, timeout_ms);
   if (ret == SOCKET_ERROR) {
     __TACOPIE_THROW(error, "WSAPoll failure");
@@ -444,7 +446,10 @@ tls::tls_receive(SOCKET socket, char* buffer, int length) {
   else if (ret == 0) {
     __TACOPIE_THROW(error, "recv() timeout - connection may be not encrypted");
   }
+}
 
+int
+tls::tls_receive(SOCKET socket, char* buffer, int length) {
   int error_or_count = ::recv(socket, buffer, length, 0);
   if (error_or_count == SOCKET_ERROR) { __TACOPIE_THROW(error, "recv() failure"); }
   if (error_or_count == 0) { __TACOPIE_THROW(warn, "nothing to read, socket has been closed by remote host"); }
