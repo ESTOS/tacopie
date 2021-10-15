@@ -86,8 +86,8 @@ public:
   //!
   //! is encryption active
   //!
-  const bool
-  is_encryption_active() { return m_encryption_active; }
+  bool
+  is_encryption_active() const { return m_encryption_active; }
 
   private:
 
