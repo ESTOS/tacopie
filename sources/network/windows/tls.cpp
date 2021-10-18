@@ -166,12 +166,14 @@ tls::handshake_loop(const fd_t& socket, const std::string& host) {
         tls_send(socket, pc_token, out_buffer[0].cbBuffer);
         FreeContextBuffer(out_buffer[0].pvBuffer);
       }
+      tls_wait_for_reply_on_socket(socket);
       bytes_received_count = tls_receive(socket, buffer.data(), static_cast<unsigned int>(buffer.size()));
     }
     else if (security_status == SEC_E_INCOMPLETE_MESSAGE) {
       if (in_buffer[1].BufferType == SECBUFFER_MISSING) {
         int missing_data_count = in_buffer[1].cbBuffer;
         __TACOPIE_LOG(info, std::string("secbuffer_missing: " + missing_data_count));
+        tls_wait_for_reply_on_socket(socket);
         bytes_received_count = tls_receive(socket, buffer.data(), missing_data_count);
       }
     }
@@ -425,6 +427,27 @@ tls::recv_decrypt(const fd_t& socket) {
   return decrypted_data;
 }
 
+void
+tls::tls_wait_for_reply_on_socket(SOCKET socket) {
+  // We need to handle the case when no data is received. Assume negotiation is started on
+  // a plain connection. Then "client hello" gets no response and system hangs.
+  WSAPOLLFD poll_fd;
+  ZeroMemory(&poll_fd, sizeof(poll_fd));
+  poll_fd.fd = socket;
+  // wait for data available to read
+  poll_fd.events = POLLRDNORM;
+
+  const int timeout_ms = 5000;
+
+  int ret = WSAPoll(&poll_fd, 1, timeout_ms);
+  if (ret == SOCKET_ERROR) {
+    __TACOPIE_THROW(error, "WSAPoll failure");
+  }
+  else if (ret == 0) {
+    __TACOPIE_THROW(error, "recv() timeout - connection may be not encrypted");
+  }
+}
+
 int
 tls::tls_receive(SOCKET socket, char* buffer, int length) {
   int error_or_count = ::recv(socket, buffer, length, 0);
@@ -466,6 +489,7 @@ tls::get_sspi_result_string(SECURITY_STATUS security_status) {
     {CERT_E_REVOKED, "CERT_E_REVOKED - A certificate was explicitly revoked by its issuer."},
     {CERT_E_ROLE, "CERT_E_ROLE - A certificate that can only be used as an end-entity is being used as a CA or vice versa."},
     {CERT_E_UNTRUSTEDCA, "CERT_E_UNTRUSTEDCA - A certification chain processed correctly, but one of the CA certificates is not trusted by the policy provider."},
+    {CERT_E_UNTRUSTEDROOT, "CERT_E_UNTRUSTEDROOT - A certificate chain processed, but terminated in a root certificate which is not trusted by the trust provider."},
     {CERT_E_UNTRUSTEDTESTROOT, "CERT_E_UNTRUSTEDTESTROOT - The certification path terminates with the test root which is not trusted with the current policy settings."},
     {CERT_E_VALIDITYPERIODNESTING, "CERT_E_VALIDITYPERIODNESTING - The validity periods of the certification chain do not nest correctly."},
     {CERT_E_WRONG_USAGE, "CERT_E_WRONG_USAGE - The certificate is not valid for the requested usage."},
