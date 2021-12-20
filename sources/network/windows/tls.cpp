@@ -86,7 +86,7 @@ tls::get_schannel_credentials() {
   // Opportunity to restrict used protocols on client side. Suggest to use this only for
   // tests and implement needed restrictions on server.
   // Example: (TLS 1.3 currently not supported on Windows. Available with Windows Server 2022)
-  // credData.grbitEnabledProtocols = SP_PROT_TLS1_0 | SP_PROT_TLS1_1 | SP_PROT_TLS1_2;
+  // credentials_data.grbitEnabledProtocols = SP_PROT_TLS1_0 | SP_PROT_TLS1_1 | SP_PROT_TLS1_2;
 
   SECURITY_STATUS security_status = AcquireCredentialsHandle( //gets the credentials necessary to make use of the ssp
     NULL,                                                    //default principle
@@ -236,6 +236,11 @@ tls::handshake_loop(const fd_t& socket, const std::string& host) {
         bytes_received_count = in_buffer[1].cbBuffer;
         process_extra_data = true;
       }
+      break;
+
+	case SEC_E_INCOMPLETE_MESSAGE:
+      __TACOPIE_LOG(info, std::string("INCOMPLETE_MESSAGE during handshake loop"));
+      bytes_received_count = 0;
       break;
 
     case SEC_E_OK:
@@ -428,7 +433,7 @@ tls::recv_decrypt(const fd_t& socket) {
 }
 
 void
-tls::tls_wait_for_reply_on_socket(SOCKET socket) {
+tls::tls_wait_for_reply_on_socket(const fd_t& socket) {
   // We need to handle the case when no data is received. Assume negotiation is started on
   // a plain connection. Then "client hello" gets no response and system hangs.
   WSAPOLLFD poll_fd;
@@ -449,7 +454,7 @@ tls::tls_wait_for_reply_on_socket(SOCKET socket) {
 }
 
 int
-tls::tls_receive(SOCKET socket, char* buffer, int length) {
+tls::tls_receive(const fd_t& socket, char* buffer, int length) {
   int error_or_count = ::recv(socket, buffer, length, 0);
   if (error_or_count == SOCKET_ERROR) { __TACOPIE_THROW(error, "recv() failure"); }
   if (error_or_count == 0) { __TACOPIE_THROW(warn, "nothing to read, socket has been closed by remote host"); }
@@ -458,7 +463,7 @@ tls::tls_receive(SOCKET socket, char* buffer, int length) {
 }
 
 int
-tls::tls_send(SOCKET socket, const char* buffer, int length) {
+tls::tls_send(const fd_t& socket, const char* buffer, int length) {
   int error_or_count = ::send(socket, buffer, length, 0);
   if (error_or_count == SOCKET_ERROR) { __TACOPIE_THROW(error, "send() failure"); }
 
@@ -501,6 +506,7 @@ tls::get_sspi_result_string(SECURITY_STATUS security_status) {
     {SEC_I_CONTINUE_NEEDED, "SEC_I_CONTINUE_NEEDED - The function completed successfully, but you must call this function again to complete the context."},
     {SEC_E_DECRYPT_FAILURE, "SEC_E_DECRYPT_FAILURE - The specified data could not be decrypted."},
     {SEC_E_ENCRYPT_FAILURE, "SEC_E_ENCRYPT_FAILURE - The specified data could not be encrypted."},
+    {SEC_E_ILLEGAL_MESSAGE, "SEC_E_ILLEGAL_MESSAGE - Check if server has logged an error for more information."},
     {SEC_I_INCOMPLETE_CREDENTIALS, "SEC_I_INCOMPLETE_CREDENTIALS - The credentials supplied were not complete and could not be verified. Additional information can be returned from the context."},
     {SEC_E_INCOMPLETE_MESSAGE, "SEC_E_INCOMPLETE_MESSAGE - The data in the input buffer is incomplete. The application needs to read more data from the server and call DecryptMessage again."},
     {SEC_E_INVALID_HANDLE, "SEC_E_INVALID_HANDLE - A context handle that is not valid was specified in the phContext parameter."},
@@ -517,6 +523,7 @@ tls::get_sspi_result_string(SECURITY_STATUS security_status) {
     {SEC_E_TARGET_UNKNOWN, "SEC_E_TARGET_UNKNOWN - The target was not recognized."},
     {SEC_E_UNKNOWN_CREDENTIALS, "SEC_E_UNKNOWN_CREDENTIALS - The credentials provided were not recognized."},
     {SEC_E_UNSUPPORTED_FUNCTION, "SEC_E_UNSUPPORTED_FUNCTION - The requested function is not supported."},
+    {SEC_E_UNTRUSTED_ROOT, "SEC_E_UNTRUSTED_ROOT - The certificate chain was issued by an authority that is not trusted."},
     {SEC_E_WRONG_PRINCIPAL, "SEC_E_WRONG_PRINCIPAL - Certificate check failed."},
     {SEC_E_OK, "SEC_E_OK - The operation completed successfully."},
     {TRUST_E_ACTION_UNKNOWN, "TRUST_E_ACTION_UNKNOWN - The trust verification action specified is not supported by the specified trust provider."},
