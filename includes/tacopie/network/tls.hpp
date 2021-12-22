@@ -103,9 +103,9 @@ public:
 
   void get_schannel_credentials();
   void handshake_loop(const fd_t& socket, const std::string &host);
-  void tls_wait_for_reply_on_socket(SOCKET socket);
-  int tls_receive(SOCKET socket, char* buffer, int length);
-  int tls_send(SOCKET socket, const char* buffer, int length);
+  void tls_wait_for_reply_on_socket(const fd_t& socket);
+  int tls_receive(const fd_t& socket, char* buffer, int length);
+  int tls_send(const fd_t& socket, const char* buffer, int length);
   std::string get_sspi_result_string(SECURITY_STATUS SecurityStatus);
 
 #else
